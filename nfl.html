@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NFL Weekly Schedule</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: rgba(0, 0, 0, 0.6);
+      --fg: #fff;
+      --accent: #ffd700;
+      --pad: 20px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    #container {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 18px;
+      padding: var(--pad);
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #scroll, #scroll-clone {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      will-change: transform;
+    }
+
+    .day {
+      color: var(--accent);
+      font-weight: bold;
+      margin-top: 20px;
+      word-wrap: break-word;
+      white-space: normal;
+    }
+
+    .game {
+      margin-bottom: 15px;
+      text-align: center;
+      word-wrap: break-word;
+      white-space: normal;
+    }
+
+    #status {
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      opacity: .7;
+      font-size: 12px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+      font-size: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      text-align: center;
+      padding: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="container" aria-live="polite">
+    <div id="scroll"></div>
+    <div id="status"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <script>
+    const API = 'https://nfl.afc270313.workers.dev/';
+    const REFRESH_MS = 300000;
+    const SPEED_PX_PER_S = 25;
+
+    const container = document.getElementById('container');
+    const scrollBox = document.getElementById('scroll');
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+
+    let rafId = null;
+    let isPaused = false;
+    let intervalId = null;
+    let fetchController = null;
+    let prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let inView = true;
+
+    const io = new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? true;
+    }, { root: null, threshold: 0 });
+    io.observe(container);
+
+    container.addEventListener('mouseenter', () => { isPaused = true; });
+    container.addEventListener('mouseleave', () => { isPaused = false; });
+
+    function cancelScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      scrollBox.style.transform = 'translateY(0)';
+      const oldClone = document.getElementById('scroll-clone');
+      if (oldClone) oldClone.remove();
+    }
+
+    function renderGames(schedule) {
+      const frag = document.createDocumentFragment();
+      const byDay = new Map();
+
+      for (const game of schedule) {
+        const dateStr = game.dateEvent + "T" + game.strTime;
+        const date = new Date(dateStr);
+        const dayLabel = date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+
+        if (!byDay.has(dayLabel)) byDay.set(dayLabel, []);
+        byDay.get(dayLabel).push(game);
+      }
+
+      for (const [day, games] of byDay.entries()) {
+        const header = document.createElement('div');
+        header.className = 'day';
+        header.textContent = `📅 ${day}`;
+        frag.appendChild(header);
+
+        for (const game of games) {
+          const home = game.strHomeTeam || 'Home';
+          const away = game.strAwayTeam || 'Away';
+          const hs = game.intHomeScore ?? '–';
+          const as = game.intAwayScore ?? '–';
+          const venue = game.strVenue || 'Unknown Venue';
+          const status = game.strStatus || game.strProgress || 'Scheduled';
+
+          const row = document.createElement('div');
+          row.className = 'game';
+
+          const strong = document.createElement('strong');
+          strong.textContent = `${home} ${hs} - ${as} ${away}`;
+          row.appendChild(strong);
+          row.appendChild(document.createElement('br'));
+
+          const meta = document.createElement('span');
+          meta.textContent = `${venue} — ${status}`;
+          row.appendChild(meta);
+
+          frag.appendChild(row);
+        }
+      }
+
+      scrollBox.replaceChildren(frag);
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function setOverlay(text = '', show = false) {
+      overlay.textContent = text;
+      overlay.style.opacity = show ? '1' : '0';
+      overlay.style.pointerEvents = show ? 'auto' : 'none';
+    }
+
+    function formatTime(d = new Date()) {
+      try {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return d.toISOString().substring(11, 16);
+      }
+    }
+
+    function startScroll() {
+      cancelScroll();
+
+      const contentH = scrollBox.scrollHeight;
+      const containerH = container.clientHeight;
+
+      if (prefersReducedMotion || contentH <= containerH) {
+        scrollBox.style.transform = 'translateY(0)';
+        return;
+      }
+
+      const clone = scrollBox.cloneNode(true);
+      clone.id = 'scroll-clone';
+      clone.style.top = `${contentH}px`;
+      clone.style.position = 'absolute';
+      container.appendChild(clone);
+
+      let y = 0;
+      const speed = SPEED_PX_PER_S;
+
+      function loop() {
+        if (isPaused || document.hidden || !inView) {
+          rafId = requestAnimationFrame(loop);
+          return;
+        }
+
+        y += speed / 60;
+        scrollBox.style.transform = `translateY(${-y}px)`;
+        clone.style.transform = `translateY(${-y}px)`;
+
+        if (y >= contentH) {
+          y = 0;
+        }
+
+        rafId = requestAnimationFrame(loop);
+      }
+
+      rafId = requestAnimationFrame(loop);
+    }
+
+    async function loadSchedule() {
+      try { fetchController?.abort(); } catch {}
+      fetchController = new AbortController();
+
+      setOverlay('Loading NFL schedule…', scrollBox.childElementCount === 0);
+
+      try {
+        const timeoutId = setTimeout(() => fetchController.abort(), 10000);
+        const res = await fetch(API, { signal: fetchController.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        const schedule = Array.isArray(data?.schedule) ? data.schedule : [];
+
+        const now = new Date();
+        const dayOfWeek = now.getDay();
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
+        weekStart.setHours(0, 0, 0, 0);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const weeklyGames = schedule.filter(game => {
+          if (!game.dateEvent || !game.strTime) return false;
+          const dateTimeStr = game.dateEvent + "T" + game.strTime;
+          const gameDate = new Date(dateTimeStr);
+          return gameDate >= weekStart && gameDate <= weekEnd;
+        });
+
+        if (!weeklyGames.length) {
+          scrollBox.replaceChildren();
+          const empty = document.createElement('div');
+          empty.textContent = 'No NFL games this week.';
+          scrollBox.appendChild(empty);
+        } else {
+          renderGames(weeklyGames);
+        }
+
+        setOverlay('', false);
+        setStatus(`Updated ${formatTime(new Date())}`);
+        startScroll();
+
+      } catch (err) {
+        if (scrollBox.childElementCount === 0) {
+          setOverlay('Error loading schedule. Retrying…', true);
+        }
+        setStatus(`Last attempt failed @ ${formatTime(new Date())}`);
+        console.error('Fetch error:', err);
+      }
+    }
+
+    try {
+      const m = window.matchMedia('(prefers-reduced-motion: reduce)');
+      m.addEventListener('change', (e) => {
+        prefersReducedMotion = e.matches;
+        startScroll();
+      });
+    } catch {}
+
+    loadSchedule();
+    intervalId = setInterval(loadSchedule, REFRESH_MS);
+
+    window.addEventListener('beforeunload', () => {
+      clearInterval(intervalId);
+      cancelScroll();
+      try { fetchController?.abort(); } catch {}
+      io.disconnect();
+    });
+  </script>
+</body>
+</html>
