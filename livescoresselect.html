@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vertical Football Score Ticker</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+    }
+    #ticker-container {
+      padding: 8px;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .league-title {
+      color: #ffd700;
+      font-weight: bold;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      font-size: 1.2em;
+    }
+    .match {
+      margin-bottom: 8px;
+    }
+    .no-scores {
+      color: #ccc;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div id="ticker-container">
+    <div id="ticker"></div>
+  </div>
+
+  <script>
+    const ticker = document.getElementById('ticker');
+
+    const targetLeagues = [
+      "English Premier League",
+      "Scottish Premier League",
+      "German Bundesliga",
+      "Italian Serie A",
+      "French Ligue 1",
+      "Spanish La Liga",
+      "Brazilian Serie A",
+      "FIFA World Cup",
+      "UEFA Champions League",
+      "UEFA Europa League",
+      "FA Cup",
+      "Copa del Rey",
+      "UEFA Nations League",
+      "Copa Libertadores",
+      "UEFA European Championships",
+      "Scottish FA Cup",
+      "Copa do Brasil",
+      "UEFA Conference League",
+    ];
+
+    function loadScores() {
+      fetch('https://sportsscore.afc270313.workers.dev/')
+        .then(r => r.json())
+        .then(data => {
+          const matches = data.livescore || [];
+          const leagues = {};
+
+          matches.forEach(m => {
+            const league = m.strLeague || 'Other';
+            if (targetLeagues.includes(league)) {
+              if (!leagues[league]) leagues[league] = [];
+              leagues[league].push(m);
+            }
+          });
+
+          const sorted = targetLeagues.filter(l => leagues[l]);
+          let html = '';
+
+          sorted.forEach(league => {
+            html += `<div class="league-title">🏆 ${league}</div>`;
+            leagues[league].forEach(m => {
+              html += `<div class="match">${m.strHomeTeam} ${m.intHomeScore} - ${m.intAwayScore} ${m.strAwayTeam} (${m.strStatus} — ${m.strProgress})</div>`;
+            });
+          });
+
+          if (html === '') {
+            html = '<div class="no-scores">⚽ No live scores for selected leagues.</div>';
+          }
+
+          ticker.innerHTML = html;
+        });
+    }
+
+    loadScores();
+    setInterval(loadScores, 120000); // Refresh every 2 minutes
+  </script>
+</body>
+</html>
