@@ -1,104 +1,330 @@
-<div id="container" style="
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-family: sans-serif;
-  padding: 20px;
-  height: 100vh;
-  overflow-x: hidden;
-  overflow-y: hidden;
-  position: relative;
-  font-size: 20px;
-  box-sizing: border-box;
-  margin: 0;
-  width: 100vw;
-">
-  <div id="scroll" style="position: absolute; top: 0; left: 0; right: 0;"></div>
-</div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Live Scores Ticker (No Scrollbars)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* === Global: remove all page scrollbars === */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;              /* no page scrollbars */
+      overscroll-behavior: none;     /* prevent elastic/bounce on touch */
+      background: #000;              /* optional base bg to avoid flashes */
+    }
+    *, *::before, *::after { box-sizing: border-box; }
 
-<script>
-  const scrollBox = document.getElementById('scroll');
-  const container = document.getElementById('container');
-
-  function loadScores() {
-    fetch('https://sportsscore.afc270313.workers.dev/')
-      .then(r => r.json())
-      .then(data => {
-        const matches = data.livescore;
-        if (!matches || matches.length === 0) {
-          scrollBox.innerHTML = '<div>No live scores right now.</div>';
-          return;
-        }
-
-        const leagues = {};
-        matches.forEach(m => {
-          const league = m.strLeague || 'Other';
-          if (!leagues[league]) leagues[league] = [];
-          leagues[league].push(m);
-        });
-
-        const sorted = Object.keys(leagues).sort();
-        let html = '';
-        sorted.forEach(league => {
-          html += `<div style="color:#ffd700;font-weight:bold;margin-top:20px;word-wrap:break-word;white-space:normal;">🏆 ${league}</div>`;
-          leagues[league].forEach(m => {
-            html += `
-              <div style="margin-bottom:15px;text-align:center;word-wrap:break-word;white-space:normal;">
-                <strong>${m.strHomeTeam} ${m.intHomeScore} - ${m.intAwayScore} ${m.strAwayTeam}</strong><br>
-                ${m.strStatus} — ${m.strProgress}
-              </div>
-            `;
-          });
-        });
-
-        scrollBox.innerHTML = html;
-        scrollBox.style.top = '0';
-        checkScroll();
-      })
-      .catch(err => {
-        scrollBox.innerHTML = '<div>Error loading scores.</div>';
-        console.error('Fetch error:', err);
-      });
-  }
-
-  function checkScroll() {
-    const contentHeight = scrollBox.offsetHeight;
-    const containerHeight = container.offsetHeight;
-
-    if (contentHeight <= containerHeight) {
-      scrollBox.style.top = '0'; // No scroll needed
-      return;
+    :root {
+      --bg: rgba(0, 0, 0, 0.6);
+      --fg: #fff;
+      --accent: #ffd700;
+      --pad: 20px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     }
 
-    startScroll(contentHeight, containerHeight);
-  }
+    /* === Full-viewport container with no scrollbars === */
+    #container {
+      position: fixed;               /* fill the viewport without causing scrollbars */
+      inset: 0;                      /* top:0; right:0; bottom:0; left:0 */
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 20px;
+      padding: var(--pad);
+      overflow: hidden;              /* ensure inner content never creates scrollbars */
+    }
 
-  function startScroll(contentHeight, containerHeight) {
-    let start = null;
-    const duration = 40000; // 40s scroll
-    const pause = 5000;     // 5s pause
+    #scroll {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      will-change: transform;        /* GPU-friendly */
+    }
 
-    function step(ts) {
-      if (!start) start = ts;
-      const progress = ts - start;
-      const percent = Math.min(progress / duration, 1);
-      const scrollDistance = contentHeight - containerHeight;
-      scrollBox.style.top = `${-percent * scrollDistance}px`;
+    .league {
+      color: var(--accent);
+      font-weight: bold;
+      margin-top: 20px;
+      word-wrap: break-word;
+      white-space: normal;
+    }
 
-      if (percent < 1) {
-        requestAnimationFrame(step);
-      } else {
-        // Reset scroll position and restart after pause
-        setTimeout(() => {
-          scrollBox.style.top = '0';
-          start = null;
-          requestAnimationFrame(step);
-        }, pause);
+    .row {
+      margin-bottom: 15px;
+      text-align: center;
+      word-wrap: break-word;
+      white-space: normal;
+    }
+
+    #status {
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      opacity: .7;
+      font-size: 12px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+      font-size: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      text-align: center;
+      padding: 1rem;
+    }
+
+    /* Optional: prevent text selection for a kiosk feel */
+    #container {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="container" aria-live="polite">
+    <div id="scroll"></div>
+    <div id="status"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <script>
+    const API = 'https://sportsscore.afc270313.workers.dev/';
+    const REFRESH_MS = 120_000;        // 2 minutes
+    const SPEED_PX_PER_S = 25;         // scrolling speed
+    const PAUSE_TOP_MS = 3000;
+    const PAUSE_BOTTOM_MS = 5000;
+
+    const container = document.getElementById('container');
+    const scrollBox = document.getElementById('scroll');
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+
+    let rafId = null;
+    let isPaused = false;
+    let intervalId = null;
+    let fetchController = null;
+    let prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let inView = true;
+
+    // Pause when tab is hidden
+    document.addEventListener('visibilitychange', () => { /* handled in loop */ });
+
+    // Pause when container not visible in viewport
+    const io = new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? true;
+    }, { root: null, threshold: 0 });
+    io.observe(container);
+
+    // Pause/resume on hover
+    container.addEventListener('mouseenter', () => { isPaused = true; });
+    container.addEventListener('mouseleave', () => { isPaused = false; });
+
+    function debounce(fn, wait = 200) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
+      };
+    }
+
+    function cancelScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      scrollBox.style.transform = 'translateY(0)';
+    }
+
+    function renderMatches(matches) {
+      const frag = document.createDocumentFragment();
+      const byLeague = new Map();
+
+      for (const m of matches) {
+        const league = (m.strLeague || 'Other').trim();
+        if (!byLeague.has(league)) byLeague.set(league, []);
+        byLeague.get(league).push(m);
+      }
+
+      const leagues = [...byLeague.keys()].sort((a, b) => a.localeCompare(b));
+      for (const league of leagues) {
+        const header = document.createElement('div');
+        header.className = 'league';
+        header.textContent = `🏆 ${league}`;
+        frag.appendChild(header);
+
+        for (const m of byLeague.get(league)) {
+          const home = (m.strHomeTeam ?? '').trim() || 'Home';
+          const away = (m.strAwayTeam ?? '').trim() || 'Away';
+          const hs = (m.intHomeScore ?? '–');
+          const as = (m.intAwayScore ?? '–');
+          const status = (m.strStatus ?? '').trim();
+          const progress = (m.strProgress ?? '').trim();
+
+          const row = document.createElement('div');
+          row.className = 'row';
+
+          const strong = document.createElement('strong');
+          strong.textContent = `${home} ${hs} - ${as} ${away}`;
+          row.appendChild(strong);
+          row.appendChild(document.createElement('br'));
+
+          const meta = document.createElement('span');
+          meta.textContent = (status || progress) ? `${status}${status && progress ? ' — ' : ''}${progress}` : '';
+          row.appendChild(meta);
+
+          frag.appendChild(row);
+        }
+      }
+
+      scrollBox.replaceChildren(frag);
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function setOverlay(text = '', show = false) {
+      overlay.textContent = text;
+      overlay.style.opacity = show ? '1' : '0';
+      overlay.style.pointerEvents = show ? 'auto' : 'none';
+    }
+
+    function formatTime(d = new Date()) {
+      try {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return d.toISOString().substring(11, 16);
       }
     }
 
-    requestAnimationFrame(step);
-  }
+    function startScroll() {
+      cancelScroll();
 
-  loadScores();
-  setInterval(loadScores, 120000); // Refresh every 2 minutes
-</script>
+      const contentH = scrollBox.scrollHeight;
+      const containerH = container.clientHeight;
+
+      // If reduced motion or content fits, don't animate
+      if (prefersReducedMotion || contentH <= containerH) {
+        scrollBox.style.transform = 'translateY(0)';
+        return;
+      }
+
+      const distance = contentH - containerH;      // total px to scroll
+      const pixelsPerMs = SPEED_PX_PER_S / 1000;   // px/ms
+      const travelMs = distance / pixelsPerMs;     // time to travel full distance
+
+      let phase = 'pauseTop'; // 'pauseTop' -> 'down' -> 'pauseBottom' -> 'reset' -> repeat
+      let phaseStart = performance.now();
+
+      const step = (ts) => {
+        if (isPaused || document.hidden || !inView) {
+          rafId = requestAnimationFrame(step);
+          return;
+        }
+
+        const elapsed = ts - phaseStart;
+
+        if (phase === 'pauseTop') {
+          if (elapsed >= PAUSE_TOP_MS) {
+            phase = 'down';
+            phaseStart = ts;
+          }
+        } else if (phase === 'down') {
+          const pct = Math.min(elapsed / travelMs, 1);
+          const y = pct * distance;
+          scrollBox.style.transform = `translateY(${-y}px)`;
+          if (pct >= 1) {
+            phase = 'pauseBottom';
+            phaseStart = ts;
+          }
+        } else if (phase === 'pauseBottom') {
+          if (elapsed >= PAUSE_BOTTOM_MS) {
+            phase = 'reset';
+            phaseStart = ts;
+          }
+        } else if (phase === 'reset') {
+          scrollBox.style.transform = 'translateY(0)';
+          phase = 'pauseTop';
+          phaseStart = ts;
+        }
+
+        rafId = requestAnimationFrame(step);
+      };
+
+      rafId = requestAnimationFrame(step);
+    }
+
+    const recomputeScroll = debounce(startScroll, 200);
+    const ro = new ResizeObserver(recomputeScroll);
+    ro.observe(container);
+    ro.observe(scrollBox);
+    window.addEventListener('resize', recomputeScroll);
+
+    async function loadScores() {
+      try { fetchController?.abort(); } catch {}
+      fetchController = new AbortController();
+
+      setOverlay('Loading live scores…', scrollBox.childElementCount === 0);
+
+      try {
+        const timeoutId = setTimeout(() => fetchController.abort(), 10_000);
+        const res = await fetch(API, { signal: fetchController.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        const matches = Array.isArray(data?.livescore) ? data.livescore : [];
+
+        if (!matches.length) {
+          scrollBox.replaceChildren();
+          const empty = document.createElement('div');
+          empty.textContent = 'No live scores right now.';
+          scrollBox.appendChild(empty);
+        } else {
+          renderMatches(matches);
+        }
+
+        setOverlay('', false);
+        setStatus(`Updated ${formatTime(new Date())}`);
+        startScroll();
+
+      } catch (err) {
+        if (scrollBox.childElementCount === 0) {
+          setOverlay('Error loading scores. Retrying…', true);
+        }
+        setStatus(`Last attempt failed @ ${formatTime(new Date())}`);
+        console.error('Fetch error:', err);
+      }
+    }
+
+    try {
+      const m = window.matchMedia('(prefers-reduced-motion: reduce)');
+      m.addEventListener('change', (e) => {
+        prefersReducedMotion = e.matches;
+        startScroll();
+      });
+    } catch {}
+
+    loadScores();
+    intervalId = setInterval(loadScores, REFRESH_MS);
+
+    window.addEventListener('beforeunload', () => {
+      clearInterval(intervalId);
+      cancelScroll();
+      try { fetchController?.abort(); } catch {}
+      io.disconnect();
+      ro.disconnect();
+    });
+  </script>
+</body>
+</html>
