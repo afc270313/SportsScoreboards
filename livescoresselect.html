@@ -6,15 +6,19 @@
   <style>
     body {
       margin: 0;
-      background: #000;
+      background: rgba(0, 0, 0, 0.7); /* Translucent black */
       color: #fff;
       font-family: sans-serif;
+      overflow: hidden;
     }
+
     #ticker-container {
       padding: 8px;
       height: 100vh;
-      overflow-y: auto;
+      overflow: hidden;
+      box-sizing: border-box;
     }
+
     .league-title {
       color: #ffd700;
       font-weight: bold;
@@ -22,9 +26,11 @@
       margin-bottom: 10px;
       font-size: 1.2em;
     }
+
     .match {
       margin-bottom: 8px;
     }
+
     .no-scores {
       color: #ccc;
       font-style: italic;
@@ -33,7 +39,7 @@
 </head>
 <body>
   <div id="ticker-container">
-    <div id="ticker"></div>
+    <div id="ticker">⏳ Loading scores...</div>
   </div>
 
   <script>
@@ -61,27 +67,29 @@
     ];
 
     function loadScores() {
+      ticker.innerHTML = '<div class="no-scores">⏳ Loading scores...</div>';
+
       fetch('https://sportsscore.afc270313.workers.dev/')
-        .then(r => r.json())
+        .then(response => response.json())
         .then(data => {
           const matches = data.livescore || [];
           const leagues = {};
 
-          matches.forEach(m => {
-            const league = m.strLeague || 'Other';
+          matches.forEach(match => {
+            const league = match.strLeague || 'Other';
             if (targetLeagues.includes(league)) {
               if (!leagues[league]) leagues[league] = [];
-              leagues[league].push(m);
+              leagues[league].push(match);
             }
           });
 
-          const sorted = targetLeagues.filter(l => leagues[l]);
+          const sortedLeagues = targetLeagues.filter(league => leagues[league]);
           let html = '';
 
-          sorted.forEach(league => {
+          sortedLeagues.forEach(league => {
             html += `<div class="league-title">🏆 ${league}</div>`;
-            leagues[league].forEach(m => {
-              html += `<div class="match">${m.strHomeTeam} ${m.intHomeScore} - ${m.intAwayScore} ${m.strAwayTeam} (${m.strStatus} — ${m.strProgress})</div>`;
+            leagues[league].forEach(match => {
+              html += `<div class="match">${match.strHomeTeam} ${match.intHomeScore} - ${match.intAwayScore} ${match.strAwayTeam} (${match.strStatus} — ${match.strProgress})</div>`;
             });
           });
 
@@ -90,6 +98,10 @@
           }
 
           ticker.innerHTML = html;
+        })
+        .catch(error => {
+          ticker.innerHTML = '<div class="no-scores">⚠️ Failed to load scores.</div>';
+          console.error('Error fetching scores:', error);
         });
     }
 
