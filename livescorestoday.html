@@ -1,86 +1,348 @@
-<div id="container" style="background:#000;color:#fff;font-family:sans-serif;padding:20px;height:100%;overflow:hidden;position:relative;font-size:20px;">
-  <div id="scroll" style="position:absolute;width:100%;top:0;"></div>
-</div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Today's Soccer Schedule — Seamless Wrap</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* Remove page scrollbars */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background: #000;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
 
-<script>
-  const scrollBox = document.getElementById('scroll');
-  const container = document.getElementById('container');
+    :root {
+      --bg: #000;
+      --fg: #fff;
+      --accent: #ffd700;
+      --pad: 20px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji";
+    }
 
-  function loadScores() {
-    fetch('https://soccertoday.afc270313.workers.dev/')
-      .then(r => r.json())
-      .then(data => {
-        const today = new Date().toISOString().slice(0, 10);
-        const matches = data.schedule.filter(m => m.strTimestamp && m.strTimestamp.startsWith(today));
+    /* Full viewport container, no scrollbars */
+    #container {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 20px;
+      padding: var(--pad);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+    }
 
-        if (!matches || matches.length === 0) {
-          scrollBox.innerHTML = '<div>No matches today.</div>';
+    /* The moving track (we’ll put two copies of content inside) */
+    #scroll {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      will-change: transform;
+    }
+
+    /* One logical copy of the content */
+    .block { display: block; }
+
+    .league {
+      color: var(--accent);
+      font-weight: bold;
+      margin-top: 20px;
+      word-wrap: break-word;
+      white-space: normal;
+      max-width: 100%;
+    }
+
+    .row {
+      margin-bottom: 15px;
+      text-align: center;
+      word-wrap: break-word;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+
+    #status {
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      opacity: .7;
+      font-size: 12px;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+      font-size: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      text-align: center;
+      padding: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="container" aria-live="polite">
+    <div id="scroll"></div>
+    <div id="status"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <script>
+    const API = 'https://soccertoday.afc270313.workers.dev/';
+    const REFRESH_MS = 120_000;        // 2 minutes
+    const SPEED_PX_PER_S = 25;         // marquee speed (higher = faster)
+    const LOOP_PAUSE_MS = 0;           // pause milliseconds at wrap; set to 1500 for a brief stop at "top"
+
+    const container = document.getElementById('container');
+    const scrollBox = document.getElementById('scroll');
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+
+    let rafId = null;
+    let isPaused = false;
+    let intervalId = null;
+    let fetchController = null;
+    let prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let inView = true;
+
+    // Pause when tab is hidden (checked in loop)
+    document.addEventListener('visibilitychange', () => {});
+
+    // Pause when this section is off-screen
+    const io = new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? true;
+    }, { root: null, threshold: 0 });
+    io.observe(container);
+
+    // Pause on hover
+    container.addEventListener('mouseenter', () => { isPaused = true; });
+    container.addEventListener('mouseleave', () => { isPaused = false; });
+
+    function debounce(fn, wait = 200) {
+      let t;
+      return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+    }
+
+    function cancelScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      scrollBox.style.transform = 'translateY(0)';
+    }
+
+    // Build one logical block (single copy) of the content safely
+    function buildContentBlock(matches) {
+      const block = document.createElement('div');
+      block.className = 'block';
+
+      // Group by league
+      const byLeague = new Map();
+      for (const m of matches) {
+        const league = (m.strLeague || 'Other').trim();
+        if (!byLeague.has(league)) byLeague.set(league, []);
+        byLeague.get(league).push(m);
+      }
+
+      const leagues = [...byLeague.keys()].sort((a, b) => a.localeCompare(b));
+
+      for (const league of leagues) {
+        const header = document.createElement('div');
+        header.className = 'league';
+        header.textContent = `🏆 ${league}`;
+        block.appendChild(header);
+
+        for (const m of byLeague.get(league)) {
+          const home = (m.strHomeTeam ?? '').trim() || 'Home';
+          const away = (m.strAwayTeam ?? '').trim() || 'Away';
+          const hs = (m.intHomeScore ?? '–');
+          const as = (m.intAwayScore ?? '–');
+          const status = (m.strStatus ?? '').trim();
+          const time = (m.strTime ?? '').trim();
+
+          const row = document.createElement('div');
+          row.className = 'row';
+
+          const strong = document.createElement('strong');
+          strong.textContent = `${home} ${hs} - ${as} ${away}`;
+          row.appendChild(strong);
+          row.appendChild(document.createElement('br'));
+
+          const meta = document.createElement('span');
+          meta.textContent = (status || time) ? `${status}${status && time ? ' — ' : ''}${time}` : '';
+          row.appendChild(meta);
+
+          block.appendChild(row);
+        }
+      }
+
+      return block;
+    }
+
+    // Replace #scroll with two stacked copies for seamless wrap
+    function setupMarquee(matches) {
+      // Create a single logical block
+      const block = buildContentBlock(matches);
+
+      // Empty #scroll and append two copies (A + B)
+      scrollBox.replaceChildren();
+      scrollBox.appendChild(block);
+      scrollBox.appendChild(block.cloneNode(true));
+    }
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function setOverlay(text = '', show = false) {
+      overlay.textContent = text;
+      overlay.style.opacity = show ? '1' : '0';
+      overlay.style.pointerEvents = show ? 'auto' : 'none';
+    }
+
+    function formatTime(d = new Date()) {
+      try { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+      catch { return d.toISOString().substring(11, 16); }
+    }
+
+    // Local "today" (avoids UTC off-by-one issues)
+    function todayLocalYYYYMMDD() { return new Date().toLocaleDateString('en-CA'); }
+
+    // Seamless wrap-around scroll
+    function startScroll() {
+      cancelScroll();
+
+      const firstBlock = scrollBox.firstElementChild;
+      if (!firstBlock || !firstBlock.classList.contains('block')) {
+        // Nothing to scroll (e.g., "No matches today.")
+        return;
+      }
+
+      const blockH = firstBlock.offsetHeight;
+      const containerH = container.clientHeight;
+
+      // If reduced motion or content fits, don’t animate
+      if (prefersReducedMotion || blockH <= containerH) {
+        scrollBox.style.transform = 'translateY(0)';
+        return;
+      }
+
+      const pixelsPerMs = SPEED_PX_PER_S / 1000;
+      let lastTs = null;
+      let offset = 0;        // how far we’ve scrolled within the first block
+      let pauseUntil = 0;    // timestamp until which we pause (for loop pause)
+
+      const step = (ts) => {
+        if (isPaused || document.hidden || !inView) {
+          lastTs = ts; // prevent big jumps after pause
+          rafId = requestAnimationFrame(step);
           return;
         }
 
-        const leagues = {};
-        matches.forEach(m => {
-          const league = m.strLeague || 'Other';
-          if (!leagues[league]) leagues[league] = [];
-          leagues[league].push(m);
-        });
+        if (lastTs == null) lastTs = ts;
+        const delta = ts - lastTs;
+        lastTs = ts;
 
-        const sorted = Object.keys(leagues).sort();
-        let html = '';
-        sorted.forEach(league => {
-          html += `<div style="color:#ffd700;font-weight:bold;margin-top:20px;">🏆 ${league}</div>`;
-          leagues[league].forEach(m => {
-            const homeScore = m.intHomeScore != null ? m.intHomeScore : '-';
-            const awayScore = m.intAwayScore != null ? m.intAwayScore : '-';
-            html += `
-              <div style="margin-bottom:15px;text-align:center;">
-                <strong>${m.strHomeTeam} ${homeScore} - ${awayScore} ${m.strAwayTeam}</strong><br>
-                ${m.strStatus} — ${m.strTime}
-              </div>
-            `;
-          });
-        });
+        if (ts < pauseUntil) {
+          rafId = requestAnimationFrame(step);
+          return;
+        }
 
-        scrollBox.innerHTML = html;
-        scrollBox.style.top = '0';
-        checkScroll();
-      });
-  }
+        offset += delta * pixelsPerMs;
 
-  function checkScroll() {
-    const contentHeight = scrollBox.offsetHeight;
-    const containerHeight = container.offsetHeight;
+        // When we’ve scrolled past one full block, wrap seamlessly
+        if (offset >= blockH) {
+          offset -= blockH; // wrap
+          if (LOOP_PAUSE_MS > 0) {
+            pauseUntil = ts + LOOP_PAUSE_MS; // optional pause at the "top"
+          }
+        }
 
-    if (contentHeight <= containerHeight) {
-      scrollBox.style.top = '0'; // No scroll needed
-      return;
+        scrollBox.style.transform = `translateY(${-offset}px)`;
+        rafId = requestAnimationFrame(step);
+      };
+
+      rafId = requestAnimationFrame(step);
     }
 
-    startScroll(contentHeight, containerHeight);
-  }
+    const recomputeScroll = debounce(startScroll, 200);
+    const ro = new ResizeObserver(recomputeScroll);
+    ro.observe(container);
+    ro.observe(scrollBox);
+    window.addEventListener('resize', recomputeScroll);
 
-  function startScroll(contentHeight, containerHeight) {
-    let start = null;
-    const duration = 40000; // 40s scroll
-    const pause = 5000;     // 5s pause
+    async function loadScores() {
+      try { fetchController?.abort(); } catch {}
+      fetchController = new AbortController();
 
-    function step(ts) {
-      if (!start) start = ts;
-      const progress = ts - start;
-      const percent = Math.min(progress / duration, 1);
-      const scrollDistance = contentHeight - containerHeight;
-      scrollBox.style.top = `${-percent * scrollDistance}px`;
+      setOverlay('Loading today’s matches…', scrollBox.childElementCount === 0);
 
-      if (percent < 1) {
-        requestAnimationFrame(step);
-      } else {
-        setTimeout(() => startScroll(contentHeight, containerHeight), pause);
+      try {
+        const timeoutId = setTimeout(() => fetchController.abort(), 10_000);
+        const res = await fetch(API, { signal: fetchController.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        const today = todayLocalYYYYMMDD();
+        const raw = Array.isArray(data?.schedule) ? data.schedule : [];
+        const matches = raw.filter(m => (m?.strTimestamp ?? '').startsWith(today));
+
+        if (!matches.length) {
+          // No marquee when empty; just show a message
+          scrollBox.replaceChildren();
+          const empty = document.createElement('div');
+          empty.className = 'row';
+          empty.textContent = 'No matches today.';
+          scrollBox.appendChild(empty);
+        } else {
+          setupMarquee(matches);
+        }
+
+        setOverlay('', false);
+        setStatus(`Updated ${formatTime(new Date())}`);
+        startScroll();
+
+      } catch (err) {
+        if (scrollBox.childElementCount === 0) {
+          setOverlay('Error loading schedule. Retrying…', true);
+        }
+        setStatus(`Last attempt failed @ ${formatTime(new Date())}`);
+        console.error('Fetch error:', err);
       }
     }
 
-    requestAnimationFrame(step);
-  }
+    // Live-update reduced-motion preference
+    try {
+      const m = window.matchMedia('(prefers-reduced-motion: reduce)');
+      m.addEventListener('change', (e) => {
+        prefersReducedMotion = e.matches;
+        startScroll();
+      });
+    } catch {}
 
-  loadScores();
-  setInterval(loadScores, 120000); // Refresh every 2 minutes
-</script>
+    loadScores();
+    intervalId = setInterval(loadScores, REFRESH_MS);
+
+    window.addEventListener('beforeunload', () => {
+      clearInterval(intervalId);
+      cancelScroll();
+      try { fetchController?.abort(); } catch {}
+      io.disconnect();
+      ro.disconnect();
+    });
+  </script>
+</body>
+</html>
