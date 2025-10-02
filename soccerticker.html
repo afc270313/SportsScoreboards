@@ -1,0 +1,97 @@
+<div id="ticker-container" style="background:#000;color:#fff;font-family:sans-serif;padding:10px;height:100%;overflow:hidden;white-space:nowrap;position:relative;">
+  <div id="ticker" style="display:inline-block;position:absolute;left:100%;white-space:nowrap;"></div>
+</div>
+
+<script>
+  const ticker = document.getElementById('ticker');
+  const container = document.getElementById('ticker-container');
+
+  const targetLeagues = [
+    "English Premier League",
+    "Scottish Premier League",
+    "German Bundesliga",
+    "Italian Serie A",
+    "French Ligue 1",
+    "Spanish La Liga",
+    "Brazilian Serie A",
+    "FIFA World Cup",
+    "UEFA Champions League",
+    "UEFA Europa League",
+    "FA Cup",
+    "Copa del Rey",
+    "UEFA Nations League",
+    "Copa Libertadores",
+    "UEFA European Championships",
+    "UEFA European Championships",
+    "Scottish FA Cup",
+    "Copa do Brasil",
+    "UEFA Conference League",
+  ];
+
+  function loadScores() {
+    fetch('https://sportsscore.afc270313.workers.dev/')
+      .then(r => r.json())
+      .then(data => {
+        const matches = data.livescore || [];
+        const leagues = {};
+
+        matches.forEach(m => {
+          const league = m.strLeague || 'Other';
+          if (targetLeagues.includes(league)) {
+            if (!leagues[league]) leagues[league] = [];
+            leagues[league].push(m);
+          }
+        });
+
+        const sorted = targetLeagues.filter(l => leagues[l]);
+        let html = '';
+
+        sorted.forEach(league => {
+          html += `<span style="color:#ffd700;font-weight:bold;margin-right:30px;">🏆 ${league}</span>`;
+          leagues[league].forEach(m => {
+            html += `<span style="margin-right:40px;">${m.strHomeTeam} ${m.intHomeScore} - ${m.intAwayScore} ${m.strAwayTeam} (${m.strProgress})</span>`;
+          });
+        });
+
+        if (html === '') {
+          html = '<span style="color:#ccc;">⚽ No live scores for selected leagues.</span>';
+        }
+
+        ticker.innerHTML = html;
+        startTicker();
+      });
+  }
+
+  function startTicker() {
+    ticker.style.left = '100%';
+    const totalWidth = ticker.offsetWidth;
+    const containerWidth = container.offsetWidth;
+
+    if (totalWidth <= containerWidth) {
+      ticker.style.left = '0';
+      return;
+    }
+
+    let start = null;
+    const duration = 60000;
+
+    function step(ts) {
+      if (!start) start = ts;
+      const progress = ts - start;
+      const percent = progress / duration;
+      const scrollDistance = totalWidth + containerWidth;
+      ticker.style.left = `${100 - percent * scrollDistance / containerWidth * 100}%`;
+
+      if (percent < 1) {
+        requestAnimationFrame(step);
+      } else {
+        startTicker();
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  loadScores();
+  setInterval(loadScores, 120000);
+</script>
