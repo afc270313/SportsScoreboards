@@ -2,17 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Live Scores Ticker (No Scrollbars)</title>
+  <title>Live Scores Ticker (Seamless Scroll)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    /* === Global: remove all page scrollbars === */
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
-      overflow: hidden;              /* no page scrollbars */
-      overscroll-behavior: none;     /* prevent elastic/bounce on touch */
-      background: #000;              /* optional base bg to avoid flashes */
+      overflow: hidden;
+      background: #000;
     }
     *, *::before, *::after { box-sizing: border-box; }
 
@@ -21,25 +19,28 @@
       --fg: #fff;
       --accent: #ffd700;
       --pad: 20px;
-      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
-    /* === Full-viewport container with no scrollbars === */
     #container {
-      position: fixed;               /* fill the viewport without causing scrollbars */
-      inset: 0;                      /* top:0; right:0; bottom:0; left:0 */
+      position: fixed;
+      inset: 0;
       background: var(--bg);
       color: var(--fg);
       font-family: var(--font);
       font-size: 20px;
       padding: var(--pad);
-      overflow: hidden;              /* ensure inner content never creates scrollbars */
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
-    #scroll {
+    #scroll, #scroll-clone {
       position: absolute;
-      top: 0; left: 0; right: 0;
-      will-change: transform;        /* GPU-friendly */
+      top: 0;
+      left: 0;
+      right: 0;
+      will-change: transform;
     }
 
     .league {
@@ -81,13 +82,6 @@
       text-align: center;
       padding: 1rem;
     }
-
-    /* Optional: prevent text selection for a kiosk feel */
-    #container {
-      -webkit-tap-highlight-color: transparent;
-      -webkit-user-select: none;
-      user-select: none;
-    }
   </style>
 </head>
 <body>
@@ -100,10 +94,8 @@
 
   <script>
     const API = 'https://sportsscore.afc270313.workers.dev/';
-    const REFRESH_MS = 120_000;        // 2 minutes
-    const SPEED_PX_PER_S = 25;         // scrolling speed
-    const PAUSE_TOP_MS = 3000;
-    const PAUSE_BOTTOM_MS = 5000;
+    const REFRESH_MS = 120_000;
+    const SPEED_PX_PER_S = 25;
 
     const container = document.getElementById('container');
     const scrollBox = document.getElementById('scroll');
@@ -117,31 +109,21 @@
     let prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let inView = true;
 
-    // Pause when tab is hidden
-    document.addEventListener('visibilitychange', () => { /* handled in loop */ });
-
-    // Pause when container not visible in viewport
+    document.addEventListener('visibilitychange', () => {});
     const io = new IntersectionObserver(([entry]) => {
       inView = entry?.isIntersecting ?? true;
     }, { root: null, threshold: 0 });
     io.observe(container);
 
-    // Pause/resume on hover
     container.addEventListener('mouseenter', () => { isPaused = true; });
     container.addEventListener('mouseleave', () => { isPaused = false; });
-
-    function debounce(fn, wait = 200) {
-      let t;
-      return (...args) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...args), wait);
-      };
-    }
 
     function cancelScroll() {
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
       scrollBox.style.transform = 'translateY(0)';
+      const oldClone = document.getElementById('scroll-clone');
+      if (oldClone) oldClone.remove();
     }
 
     function renderMatches(matches) {
@@ -212,62 +194,39 @@
       const contentH = scrollBox.scrollHeight;
       const containerH = container.clientHeight;
 
-      // If reduced motion or content fits, don't animate
       if (prefersReducedMotion || contentH <= containerH) {
         scrollBox.style.transform = 'translateY(0)';
         return;
       }
 
-      const distance = contentH - containerH;      // total px to scroll
-      const pixelsPerMs = SPEED_PX_PER_S / 1000;   // px/ms
-      const travelMs = distance / pixelsPerMs;     // time to travel full distance
+      const clone = scrollBox.cloneNode(true);
+      clone.id = 'scroll-clone';
+      clone.style.top = `${contentH}px`;
+      clone.style.position = 'absolute';
+      container.appendChild(clone);
 
-      let phase = 'pauseTop'; // 'pauseTop' -> 'down' -> 'pauseBottom' -> 'reset' -> repeat
-      let phaseStart = performance.now();
+      let y = 0;
+      const speed = SPEED_PX_PER_S;
 
-      const step = (ts) => {
+      function loop() {
         if (isPaused || document.hidden || !inView) {
-          rafId = requestAnimationFrame(step);
+          rafId = requestAnimationFrame(loop);
           return;
         }
 
-        const elapsed = ts - phaseStart;
+        y += speed / 60;
+        scrollBox.style.transform = `translateY(${-y}px)`;
+        clone.style.transform = `translateY(${-y}px)`;
 
-        if (phase === 'pauseTop') {
-          if (elapsed >= PAUSE_TOP_MS) {
-            phase = 'down';
-            phaseStart = ts;
-          }
-        } else if (phase === 'down') {
-          const pct = Math.min(elapsed / travelMs, 1);
-          const y = pct * distance;
-          scrollBox.style.transform = `translateY(${-y}px)`;
-          if (pct >= 1) {
-            phase = 'pauseBottom';
-            phaseStart = ts;
-          }
-        } else if (phase === 'pauseBottom') {
-          if (elapsed >= PAUSE_BOTTOM_MS) {
-            phase = 'reset';
-            phaseStart = ts;
-          }
-        } else if (phase === 'reset') {
-          scrollBox.style.transform = 'translateY(0)';
-          phase = 'pauseTop';
-          phaseStart = ts;
+        if (y >= contentH) {
+          y = 0;
         }
 
-        rafId = requestAnimationFrame(step);
-      };
+        rafId = requestAnimationFrame(loop);
+      }
 
-      rafId = requestAnimationFrame(step);
+      rafId = requestAnimationFrame(loop);
     }
-
-    const recomputeScroll = debounce(startScroll, 200);
-    const ro = new ResizeObserver(recomputeScroll);
-    ro.observe(container);
-    ro.observe(scrollBox);
-    window.addEventListener('resize', recomputeScroll);
 
     async function loadScores() {
       try { fetchController?.abort(); } catch {}
@@ -323,8 +282,6 @@
       cancelScroll();
       try { fetchController?.abort(); } catch {}
       io.disconnect();
-      ro.disconnect();
     });
   </script>
 </body>
-</html>
