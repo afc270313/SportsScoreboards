@@ -1,0 +1,86 @@
+<div id="container" style="background:#000;color:#fff;font-family:sans-serif;padding:20px;height:100%;overflow:hidden;position:relative;font-size:20px;">
+  <div id="scroll" style="position:absolute;width:100%;top:0;"></div>
+</div>
+
+<script>
+  const scrollBox = document.getElementById('scroll');
+  const container = document.getElementById('container');
+
+  function loadScores() {
+    fetch('https://soccertoday.afc270313.workers.dev/')
+      .then(r => r.json())
+      .then(data => {
+        const today = new Date().toISOString().slice(0, 10);
+        const matches = data.schedule.filter(m => m.strTimestamp && m.strTimestamp.startsWith(today));
+
+        if (!matches || matches.length === 0) {
+          scrollBox.innerHTML = '<div>No matches today.</div>';
+          return;
+        }
+
+        const leagues = {};
+        matches.forEach(m => {
+          const league = m.strLeague || 'Other';
+          if (!leagues[league]) leagues[league] = [];
+          leagues[league].push(m);
+        });
+
+        const sorted = Object.keys(leagues).sort();
+        let html = '';
+        sorted.forEach(league => {
+          html += `<div style="color:#ffd700;font-weight:bold;margin-top:20px;">🏆 ${league}</div>`;
+          leagues[league].forEach(m => {
+            const homeScore = m.intHomeScore != null ? m.intHomeScore : '-';
+            const awayScore = m.intAwayScore != null ? m.intAwayScore : '-';
+            html += `
+              <div style="margin-bottom:15px;text-align:center;">
+                <strong>${m.strHomeTeam} ${homeScore} - ${awayScore} ${m.strAwayTeam}</strong><br>
+                ${m.strStatus} — ${m.strTime}
+              </div>
+            `;
+          });
+        });
+
+        scrollBox.innerHTML = html;
+        scrollBox.style.top = '0';
+        checkScroll();
+      });
+  }
+
+  function checkScroll() {
+    const contentHeight = scrollBox.offsetHeight;
+    const containerHeight = container.offsetHeight;
+
+    if (contentHeight <= containerHeight) {
+      scrollBox.style.top = '0'; // No scroll needed
+      return;
+    }
+
+    startScroll(contentHeight, containerHeight);
+  }
+
+  function startScroll(contentHeight, containerHeight) {
+    let start = null;
+    const duration = 40000; // 40s scroll
+    const pause = 5000;     // 5s pause
+
+    function step(ts) {
+      if (!start) start = ts;
+      const progress = ts - start;
+      const percent = Math.min(progress / duration, 1);
+      const scrollDistance = contentHeight - containerHeight;
+      scrollBox.style.top = `${-percent * scrollDistance}px`;
+
+      if (percent < 1) {
+        requestAnimationFrame(step);
+      } else {
+        setTimeout(() => startScroll(contentHeight, containerHeight), pause);
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  loadScores();
+  setInterval(loadScores, 120000); // Refresh every 2 minutes
+</script>
