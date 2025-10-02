@@ -1,0 +1,104 @@
+<div id="container" style="
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-family: sans-serif;
+  padding: 20px;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  position: relative;
+  font-size: 20px;
+  box-sizing: border-box;
+  margin: 0;
+  width: 100vw;
+">
+  <div id="scroll" style="position: absolute; top: 0; left: 0; right: 0;"></div>
+</div>
+
+<script>
+  const scrollBox = document.getElementById('scroll');
+  const container = document.getElementById('container');
+
+  function loadScores() {
+    fetch('https://sportsscore.afc270313.workers.dev/')
+      .then(r => r.json())
+      .then(data => {
+        const matches = data.livescore;
+        if (!matches || matches.length === 0) {
+          scrollBox.innerHTML = '<div>No live scores right now.</div>';
+          return;
+        }
+
+        const leagues = {};
+        matches.forEach(m => {
+          const league = m.strLeague || 'Other';
+          if (!leagues[league]) leagues[league] = [];
+          leagues[league].push(m);
+        });
+
+        const sorted = Object.keys(leagues).sort();
+        let html = '';
+        sorted.forEach(league => {
+          html += `<div style="color:#ffd700;font-weight:bold;margin-top:20px;word-wrap:break-word;white-space:normal;">🏆 ${league}</div>`;
+          leagues[league].forEach(m => {
+            html += `
+              <div style="margin-bottom:15px;text-align:center;word-wrap:break-word;white-space:normal;">
+                <strong>${m.strHomeTeam} ${m.intHomeScore} - ${m.intAwayScore} ${m.strAwayTeam}</strong><br>
+                ${m.strStatus} — ${m.strProgress}
+              </div>
+            `;
+          });
+        });
+
+        scrollBox.innerHTML = html;
+        scrollBox.style.top = '0';
+        checkScroll();
+      })
+      .catch(err => {
+        scrollBox.innerHTML = '<div>Error loading scores.</div>';
+        console.error('Fetch error:', err);
+      });
+  }
+
+  function checkScroll() {
+    const contentHeight = scrollBox.offsetHeight;
+    const containerHeight = container.offsetHeight;
+
+    if (contentHeight <= containerHeight) {
+      scrollBox.style.top = '0'; // No scroll needed
+      return;
+    }
+
+    startScroll(contentHeight, containerHeight);
+  }
+
+  function startScroll(contentHeight, containerHeight) {
+    let start = null;
+    const duration = 40000; // 40s scroll
+    const pause = 5000;     // 5s pause
+
+    function step(ts) {
+      if (!start) start = ts;
+      const progress = ts - start;
+      const percent = Math.min(progress / duration, 1);
+      const scrollDistance = contentHeight - containerHeight;
+      scrollBox.style.top = `${-percent * scrollDistance}px`;
+
+      if (percent < 1) {
+        requestAnimationFrame(step);
+      } else {
+        // Reset scroll position and restart after pause
+        setTimeout(() => {
+          scrollBox.style.top = '0';
+          start = null;
+          requestAnimationFrame(step);
+        }, pause);
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  loadScores();
+  setInterval(loadScores, 120000); // Refresh every 2 minutes
+</script>
