@@ -36,7 +36,7 @@
   </div>
 
   <script>
-    const sports = ['IndyCar Series'];
+    const sports = ['Formula 1'];
     const maxVideosPerSport = 8;
     const endpoint = 'https://othersporthigh.afc270313.workers.dev/';
     let playlist = [], currentIndex = 0, player;
