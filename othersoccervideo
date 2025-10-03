@@ -1,0 +1,71 @@
+<style>
+  #player-wrapper {
+    position: relative;
+    width: 100%;
+    padding-top: 56.25%; /* 16:9 aspect ratio */
+  }
+  #player {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+
+<div id="player-wrapper">
+  <div id="player"></div>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+  const url = 'https://mysoccerteams.afc270313.workers.dev/';
+  const targetLeagues = ['Italian Serie A', 'German Bundesliga','Spanish La Liga','Brazilian Serie A','FIFA World Cup','UEFA Champions League','UEFA Europa League','Copa Libertadores'];
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+  let videoIds = [], currentIndex = 0, ytPlayer;
+
+  function onYouTubeIframeAPIReady() {
+    fetch(url)
+      .then(res => res.json())
+      .then(data => {
+        const matches = data.schedule.filter(match =>
+          targetLeagues.includes(match.strLeague) &&
+          new Date(match.dateEvent) >= oneWeekAgo &&
+          match.strVideo && match.strVideo.includes('youtube.com/watch?v=')
+        );
+
+        videoIds = matches.map(m => m.strVideo.split('v=')[1].split('&')[0]);
+
+        if (videoIds.length === 0) {
+          document.getElementById('player-wrapper').innerHTML = '<p>No videos found.</p>';
+          return;
+        }
+
+        ytPlayer = new YT.Player('player', {
+          videoId: videoIds[currentIndex],
+          playerVars: {
+            autoplay: 1,
+            mute: 1,
+            rel: 0,
+            modestbranding: 1
+          },
+          events: {
+            onStateChange: onPlayerStateChange
+          }
+        });
+      })
+      .catch(err => {
+        document.getElementById('player-wrapper').innerHTML = '<p>Error loading video playlist.</p>';
+        console.error(err);
+      });
+  }
+
+  function onPlayerStateChange(event) {
+    if (event.data === YT.PlayerState.ENDED) {
+      currentIndex = (currentIndex + 1) % videoIds.length;
+      ytPlayer.loadVideoById(videoIds[currentIndex]);
+    }
+  }
+</script>
