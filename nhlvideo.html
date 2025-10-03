@@ -1,0 +1,52 @@
+<div id="videoContainer" style="width:100%; height:100%; overflow:hidden;">
+  <iframe id="ytPlayer" width="100%" height="100%" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+</div>
+
+<script>
+(async () => {
+  const res = await fetch("https://nhlhighlight.afc270313.workers.dev/");
+  const json = await res.json();
+  const schedule = json.schedule || [];
+
+  const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const recent = schedule.filter(g => new Date(g.dateEvent) >= cutoff && g.strVideo?.includes("youtube.com"));
+
+  const videoIds = recent.map(g => {
+    const match = g.strVideo.match(/v=([^&]+)/);
+    return match ? match[1] : null;
+  }).filter(Boolean);
+
+  if (videoIds.length === 0) return;
+
+  const player = document.getElementById("ytPlayer");
+  let index = 0;
+
+  const playNext = () => {
+    const id = videoIds[index];
+    player.src = `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&rel=0&showinfo=0&enablejsapi=1`;
+    index = (index + 1) % videoIds.length;
+  };
+
+  // Poll for end of video using YouTube embed workaround
+  let checkInterval;
+  const monitorPlayback = () => {
+    clearInterval(checkInterval);
+    checkInterval = setInterval(() => {
+      const iframe = player.contentWindow;
+      if (iframe && iframe.postMessage) {
+        iframe.postMessage('{"event":"command","func":"getPlayerState","args":""}', '*');
+      }
+    }, 5000);
+  };
+
+  window.addEventListener("message", (event) => {
+    if (typeof event.data === "string" && event.data.includes("playerState")) {
+      const state = JSON.parse(event.data).info;
+      if (state === 0) playNext(); // 0 = ended
+    }
+  });
+
+  playNext();
+  monitorPlayback();
+})();
+</script>
