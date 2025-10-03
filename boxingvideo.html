@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: black;
+      color: white;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+      box-sizing: border-box;
+      padding: 1vh;
+    }
+    #poster {
+      max-height: 30vh;
+      max-width: 90vw;
+      object-fit: contain;
+      margin-bottom: 1vh;
+    }
+    #details {
+      text-align: center;
+      font-size: 2.5vh;
+      margin-bottom: 1vh;
+    }
+    iframe {
+      width: 90vw;
+      height: 50vh;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <img id="poster" src="" alt="Poster">
+    <div id="details"></div>
+    <iframe id="player" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+  </div>
+
+  <script>
+    const endpoint = "https://boxing.afc270313.workers.dev/";
+    const player = document.getElementById("player");
+    const details = document.getElementById("details");
+    const poster = document.getElementById("poster");
+    let playlist = [], index = 0;
+
+    async function fetchSchedule() {
+      try {
+        const res = await fetch(endpoint);
+        const data = await res.json();
+        playlist = (data.schedule || [])
+          .filter(item => item.strVideo)
+          .sort((a, b) => new Date(b.dateEvent) - new Date(a.dateEvent));
+        if (playlist.length) playNext();
+        else details.textContent = "No videos available.";
+      } catch (e) {
+        details.textContent = "Error loading schedule.";
+      }
+    }
+
+    function getYouTubeEmbed(url) {
+      const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+      return match ? `https://www.youtube.com/embed/${match[1]}?autoplay=1&mute=1&rel=0&showinfo=0` : "";
+    }
+
+    function playNext() {
+      const item = playlist[index];
+      if (!item) return;
+      poster.src = item.strPoster || "";
+      details.textContent = `${item.strEvent || "Match"} — ${item.dateEvent || ""} — ${item.strVenue || ""}, ${item.strCountry || ""}`;
+      player.src = getYouTubeEmbed(item.strVideo);
+    }
+
+    // Rotate every 60s (or adjust based on video length if needed)
+    setInterval(() => {
+      index = (index + 1) % playlist.length;
+      playNext();
+    }, 60000);
+
+    fetchSchedule();
+  </script>
+</body>
+</html>
