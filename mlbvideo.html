@@ -1,0 +1,41 @@
+<div id="videoContainer" style="width:100%;height:auto;">
+  <iframe id="highlightPlayer" width="100%" height="315" frameborder="0"
+    allow="autoplay; encrypted-media" allowfullscreen></iframe>
+</div>
+
+<script>
+(async () => {
+  const endpoint = "https://mlbhighlight.afc270313.workers.dev/";
+  const player = document.getElementById("highlightPlayer");
+
+  const res = await fetch(endpoint);
+  const data = await res.json();
+
+  const today = new Date();
+  const twoDaysAgo = new Date(today.getTime() - 2 * 864e5).toISOString().slice(0, 10);
+
+  const videos = (data.schedule || [])
+    .filter(g =>
+      g.strLeague === "MLB" &&
+      g.strStatus === "FT" &&
+      g.dateEvent >= twoDaysAgo &&
+      g.strVideo?.includes("youtube.com/watch")
+    )
+    .map(g => {
+      const id = g.strVideo.split("v=")[1]?.split("&")[0];
+      return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=1` : null;
+    })
+    .filter(Boolean);
+
+  let index = 0;
+
+  const playNext = () => {
+    if (!videos.length) return;
+    player.src = videos[index] + "&enablejsapi=1";
+    index = (index + 1) % videos.length;
+  };
+
+  playNext();
+  setInterval(playNext, 60000); // Rotate every 60s
+})();
+</script>
