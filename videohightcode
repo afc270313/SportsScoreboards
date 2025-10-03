@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IndyCar Series Highlights</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background-color: black;
+    }
+    #videoContainer {
+      width: 100%;
+      height: calc(100% - 40px); /* leave space for title */
+      overflow: hidden;
+    }
+    #ytPlayer {
+      width: 100%;
+      height: 100%;
+    }
+    h2 {
+      color: white;
+      text-align: center;
+      margin: 0;
+      padding: 10px;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <h2>IndyCar Series Highlights</h2>
+  <div id="videoContainer">
+    <div id="ytPlayer"></div>
+  </div>
+
+  <script>
+    const sports = ['IndyCar Series'];
+    const maxVideosPerSport = 8;
+    const endpoint = 'https://othersporthigh.afc270313.workers.dev/';
+    let playlist = [], currentIndex = 0, player;
+
+    const extractVideoId = url => {
+      const match = url?.match(/v=([^&]+)/);
+      return match ? match[1] : null;
+    };
+
+    const isWithinLastMonth = timestamp => {
+      const eventDate = new Date(timestamp);
+      const now = new Date();
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setDate(now.getDate() - 30);
+      return eventDate >= oneMonthAgo && eventDate <= now;
+    };
+
+    const tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+
+    window.onYouTubeIframeAPIReady = async () => {
+      try {
+        const res = await fetch(endpoint);
+        const json = await res.json();
+        const schedule = json.schedule || [];
+
+        sports.forEach(sport => {
+          const sportVideos = schedule
+            .filter(item =>
+              item.strLeague === sport &&
+              item.strVideo?.includes('youtube.com/watch') &&
+              isWithinLastMonth(item.strTimestamp)
+            )
+            .sort((a, b) => new Date(b.strTimestamp) - new Date(a.strTimestamp))
+            .slice(0, maxVideosPerSport)
+            .map(item => extractVideoId(item.strVideo))
+            .filter(Boolean);
+          playlist.push(...sportVideos);
+        });
+
+        if (!playlist.length) {
+          document.getElementById('videoContainer').innerHTML =
+            '<p style="color:white;text-align:center;">No recent YouTube videos found.</p>';
+          return;
+        }
+
+        player = new YT.Player('ytPlayer', {
+          width: '100%',
+          height: '100%',
+          videoId: playlist[currentIndex],
+          playerVars: {
+            autoplay: 1,
+            mute: 1,
+            controls: 1,
+            rel: 0,
+            showinfo: 0
+          },
+          events: {
+            onReady: e => e.target.playVideo(),
+            onStateChange: e => {
+              if (e.data === YT.PlayerState.ENDED) {
+                currentIndex = (currentIndex + 1) % playlist.length;
+                player.loadVideoById(playlist[currentIndex]);
+              }
+            }
+          }
+        });
+      } catch (err) {
+        console.error('YouTube playlist error:', err);
+        document.getElementById('videoContainer').innerHTML =
+          '<p style="color:white;text-align:center;">Error loading videos.</p>';
+      }
+    };
+  </script>
+</body>
+</html>
