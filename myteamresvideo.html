@@ -1,0 +1,72 @@
+<div id="team-events" style="font-family: Arial, sans-serif; font-size: 16px; color: white;"></div>
+<script>
+(async () => {
+  const container = document.getElementById('team-events');
+  try {
+    const res = await fetch('https://mysoccerteams.afc270313.workers.dev/');
+    const data = await res.json();
+
+    const targetTeams = ['aberdeen', 'manchester united', 'scotland', 'atlético mineiro','brazil'];
+
+    const matches = data.schedule.filter(e => {
+      const home = e.strHomeTeam?.toLowerCase() || '';
+      const away = e.strAwayTeam?.toLowerCase() || '';
+      const isTarget = targetTeams.some(team => home.includes(team) || away.includes(team));
+      return isTarget && e.strStatus === 'Match Finished';
+    });
+
+    const latest = {};
+    for (const team of targetTeams) {
+      latest[team] = matches
+        .filter(e => e.strHomeTeam?.toLowerCase().includes(team) || e.strAwayTeam?.toLowerCase().includes(team))
+        .sort((a, b) => new Date(b.strTimestamp) - new Date(a.strTimestamp))[0];
+    }
+
+    const displayBlocks = [];
+    const videoIds = [];
+
+    for (const team of targetTeams) {
+      const match = latest[team];
+      if (!match) continue;
+
+      const {
+        strHomeTeam, strAwayTeam,
+        intHomeScore, intAwayScore,
+        strTimestamp, strLeague, strVideo
+      } = match;
+
+      const date = new Date(strTimestamp).toLocaleDateString('en-GB', {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+      });
+
+      displayBlocks.push(`
+        <div><strong>${strHomeTeam} ${intHomeScore} - ${intAwayScore} ${strAwayTeam}</strong></div>
+        <div>${strLeague}</div>
+        <div>${date}</div>
+      `);
+
+      if (strVideo?.includes('youtube.com')) {
+        const id = strVideo.split('v=')[1]?.split('&')[0];
+        if (id) videoIds.push(id);
+      }
+    }
+
+    let videoEmbed = '';
+    if (videoIds.length > 0) {
+      const firstId = videoIds[0];
+      const playlist = videoIds.join(',');
+      videoEmbed = `
+        <iframe width="100%" height="200"
+          src="https://www.youtube.com/embed/${firstId}?autoplay=1&loop=1&playlist=${playlist}&mute=1"
+          frameborder="0" allow="autoplay; encrypted-media" allowfullscreen>
+        </iframe>`;
+    }
+
+    container.innerHTML = displayBlocks.join('<br>') + videoEmbed;
+
+  } catch (err) {
+    container.textContent = 'Error loading match data.';
+    console.error(err);
+  }
+})();
+</script>
