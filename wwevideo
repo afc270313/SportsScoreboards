@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>WWE Event Rotator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      text-align: center;
+      height: 100vh;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+
+    #container {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+    }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: 1.5rem;
+    }
+
+    #venue {
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+
+    img {
+      max-width: 100%;
+      max-height: 30vh;
+      height: auto;
+      margin-bottom: 10px;
+      object-fit: contain;
+    }
+
+    #player {
+      width: 100%;
+      max-width: 800px;
+      aspect-ratio: 16 / 9;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1 id="event-name">Loading...</h1>
+    <div id="venue"></div>
+    <img id="thumb" src="" alt="Event Thumbnail" />
+    <div id="player"></div>
+  </div>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script>
+    let events = [];
+    let currentIndex = 0;
+    let player;
+
+    function showEvent(index) {
+      const event = events[index];
+      document.getElementById('event-name').textContent = event.strEvent;
+      document.getElementById('venue').textContent = `Venue: ${event.strCountry || 'Unknown'}`;
+      document.getElementById('thumb').src = event.strThumb;
+      document.getElementById('thumb').alt = event.strEvent + ' Thumbnail';
+
+      const videoId = event.strVideo.split('v=')[1];
+      if (player) {
+        player.loadVideoById({ videoId, startSeconds: 0 });
+      } else {
+        player = new YT.Player('player', {
+          videoId,
+          playerVars: {
+            autoplay: 1,
+            mute: 1,
+            loop: 0,
+            controls: 0,
+            modestbranding: 1,
+            rel: 0
+          },
+          events: {
+            onReady: e => e.target.playVideo(),
+            onStateChange: onPlayerStateChange
+          }
+        });
+      }
+    }
+
+    function onPlayerStateChange(event) {
+      if (event.data === YT.PlayerState.ENDED) {
+        currentIndex = (currentIndex + 1) % events.length;
+        showEvent(currentIndex);
+      }
+    }
+
+    fetch('https://wwe.afc270313.workers.dev/')
+      .then(response => response.json())
+      .then(data => {
+        const rawEvents = Array.isArray(data.schedule) ? data.schedule : data;
+        const sorted = rawEvents
+          .filter(e => e.dateEvent)
+          .sort((a, b) => new Date(b.dateEvent) - new Date(a.dateEvent));
+
+        const recentThree = sorted.slice(0, 5).filter(e =>
+          e.strVideo && e.strVideo.includes('youtube.com/watch?v=') &&
+          e.strThumb && e.strEvent
+        ).slice(0, 3);
+
+        if (recentThree.length > 0) {
+          events = recentThree;
+          showEvent(currentIndex);
+        } else {
+          document.getElementById('event-name').textContent = 'No valid recent events found';
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching event data:', error);
+        document.getElementById('event-name').textContent = 'Failed to load events';
+      });
+  </script>
+</body>
+</html>
