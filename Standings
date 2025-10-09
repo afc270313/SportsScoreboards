@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>EPL Table</title>
+  <style>
+    body {
+      background: #000;
+      margin: 0;
+      padding: 20px;
+      font-family: sans-serif;
+      font-size: 12px;
+      color: #fff;
+    }
+    #epl-table {
+      overflow: auto;
+      max-height: 100vh;
+    }
+    #epl-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #epl-table th, #epl-table td {
+      padding: 4px;
+      text-align: left;
+      color: #fff;
+    }
+    #epl-table th {
+      background: #222;
+      position: sticky;
+      top: 0;
+    }
+    #epl-table tbody tr {
+      background: #b00; /* Red rows */
+    }
+  </style>
+</head>
+<body>
+  <div id="epl-table">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Team</th>
+          <th>Pl</th>
+          <th>W</th>
+          <th>D</th>
+          <th>L</th>
+          <th>GD</th>
+          <th>Pts</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="8">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    fetch("https://www.thesportsdb.com/api/v1/json/173779/lookuptable.php?l=4332&s=2025-2026")
+      .then(res => res.json())
+      .then(data => {
+        if (!data.table || data.table.length === 0) {
+          document.getElementById("table-body").innerHTML = "<tr><td colspan='8'>No data available</td></tr>";
+          return;
+        }
+
+        const rows = data.table.map(team => `
+          <tr>
+            <td>${team.intRank}</td>
+            <td>${team.strTeam}</td>
+            <td>${team.intPlayed}</td>
+            <td>${team.intWin}</td>
+            <td>${team.intDraw}</td>
+            <td>${team.intLoss}</td>
+            <td>${team.intGoalDifference}</td>
+            <td><strong>${team.intPoints}</strong></td>
+          </tr>
+        `).join("");
+
+        document.getElementById("table-body").innerHTML = rows;
+      })
+      .catch(err => {
+        console.error("Fetch error:", err);
+        document.getElementById("table-body").innerHTML = "<tr><td colspan='8'>Error loading data</td></tr>";
+      });
+  </script>
+</body>
