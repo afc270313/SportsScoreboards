@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Last 2 Weeks — League 4330</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    *, ::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: rgba(0, 0, 0, 0.5);
+      --fg: #fff;
+      --accent: #ffd700;
+      --pad: 20px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji";
+    }
+
+    #container {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      backdrop-filter: blur(5px);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 12px;
+      padding: var(--pad);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #title {
+      flex: 0 0 auto;
+      text-align: left;
+      color: var(--accent);
+      margin-bottom: 10px;
+      padding-left: 10px;
+    }
+
+    #scroll-wrapper {
+      flex: 1 1 auto;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #scroll {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      will-change: transform;
+    }
+
+    .block { display: block; }
+
+    .row {
+      margin-bottom: 15px;
+      text-align: center;
+      word-wrap: break-word;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+
+    #status {
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      opacity: .7;
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+      font-size: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      text-align: center;
+      padding: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="container" aria-live="polite">
+    <div id="title"></div>
+    <div id="scroll-wrapper">
+      <div id="scroll"></div>
+    </div>
+    <div id="status"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <script>
+    const API = 'https://mysoccerteams.afc270313.workers.dev/';
+    const REFRESH_MS = 120000;
+    const SPEEDPXPER_S = 6;
+
+    const container = document.getElementById('container');
+    const scrollWrapper = document.getElementById('scroll-wrapper');
+    const scrollBox = document.getElementById('scroll');
+    const titleBox = document.getElementById('title');
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+
+    let rafId = null;
+    let isPaused = false;
+    let intervalId = null;
+    let fetchController = null;
+    let prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let inView = true;
+
+    const io = new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? true;
+    }, { root: null, threshold: 0 });
+    io.observe(container);
+
+    container.addEventListener('mouseenter', () => { isPaused = true; });
+    container.addEventListener('mouseleave', () => { isPaused = false; });
+
+    function cancelScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      scrollBox.style.transform = 'translateY(0)';
+    }
+
+    function buildContentBlock(matches) {
+      const block = document.createElement('div');
+      block.className = 'block';
+      titleBox.innerHTML = '';
+
+      const byLeague = new Map();
+      for (const m of matches) {
+        const league = (m.strLeague || 'Other').trim();
+        if (!byLeague.has(league)) byLeague.set(league, []);
+        byLeague.get(league).push(m);
+      }
+
+      const leagues = [...byLeague.keys()].sort((a, b) => a.localeCompare(b));
+
+      for (const league of leagues) {
+        const header = document.createElement('div');
+        header.textContent = `🏆 ${league}`;
+        titleBox.appendChild(header);
+
+        for (const m of byLeague.get(league)) {
+          const home = (m.strHomeTeam ?? '').trim() || 'Home';
+          const away = (m.strAwayTeam ?? '').trim() || 'Away';
+          const hs = (m.intHomeScore ?? '–');
+          const as = (m.intAwayScore ?? '–');
+          const status = (m.strStatus ?? '').trim();
+          const time = (m.strTime ?? '').trim();
+          const homeBadgeUrl = m.strHomeTeamBadge || '';
+          const awayBadgeUrl = m.strAwayTeamBadge || '';
+
+          const row = document.createElement('div');
+          row.className = 'row';
+
+          const homeBadge = document.createElement('img');
+          homeBadge.src = homeBadgeUrl;
+          homeBadge.alt = home + ' badge';
+          homeBadge.style.width = '16px';
+          homeBadge.style.height = '16px';
+          homeBadge.style.verticalAlign = 'middle';
+          homeBadge.style.marginRight = '4px';
+
+          const awayBadge = document.createElement('img');
+          awayBadge.src = awayBadgeUrl;
+          awayBadge.alt = away + ' badge';
+          awayBadge.style.width = '16px';
+          awayBadge.style.height = '16px';
+          awayBadge.style.verticalAlign = 'middle';
+          awayBadge.style.marginLeft = '4px';
+
+          const strong = document.createElement('strong');
+          strong.appendChild(homeBadge);
+          strong.appendChild(document.createTextNode(` ${home} ${hs} - `));
+          strong.appendChild(document.createTextNode(`${as} ${away} `));
+          strong.appendChild(awayBadge);
+
+          row.appendChild(strong);
+          row.appendChild(document.createElement('br'));
+
+          const meta = document.createElement('span');
+     //     meta.textContent = (status || time) ? `${status}${status && time ? ' — ' : ''}${time}` : '';
+          row.appendChild(meta);
+
+          block.appendChild(row);
+        }
+      }
+
+      return block;
+    }
+
+    function setupMarquee(matches) {
+      const block = buildContentBlock(matches);
+      scrollBox.replaceChildren();
+      scrollBox.appendChild(block);
+      scrollBox.appendChild(block.cloneNode(true));
+    }
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function setOverlay(text = '', show = false) {
+      overlay.textContent = text;
+      overlay.style.opacity = show ? '1' : '0';
+      overlay.style.pointerEvents = show ? 'auto' : 'none';
+    }
+
+    function formatTime(d = new Date()) {
+      try { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+      catch { return d.toISOString().substring(11, 16); }
+    }
+
+    async function loadScores() {
+      try { fetchController?.abort(); } catch {}
+      fetchController = new AbortController();
+
+      setOverlay("Loading last 2 weeks of matches…", scrollBox.childElementCount === 0);
+
+      try {
+        const timeoutId = setTimeout(() => fetchController.abort(), 10000);
+        const res = await fetch(API, { signal: fetchController.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        const raw = Array.isArray(data?.schedule) ? data.schedule : [];
+
+        // Dynamic date range: last 14 days
+        const today = new Date();
+        const endDate = today.toISOString().split('T')[0];
+
+        const start = new Date();
+        start.setDate(today.getDate() - 14);
+        const startDate = start.toISOString().split('T')[0];
+
+        const filtered = raw.filter(m => {
+          const leagueId = String(m?.idLeague);
+          const date = m?.dateEvent;
+          return leagueId === '4328' && date >= startDate && date <= endDate;
+        });
+
+        const matchMap = new Map();
+        for (const m of filtered) {
+          const key = `${m.idEvent}-${m.strHomeTeam}-${m.strAwayTeam}-${m.dateEvent}`;
+          if (!matchMap.has(key)) matchMap.set(key, m);
+        }
+
+        const matches = Array.from(matchMap.values());
+
+        if (!matches.length) {
+          scrollBox.replaceChildren();
+          const empty = document.createElement('div');
+          empty.className = 'row';
+          empty.textContent = 'No matches in the last 2 weeks.';
+          scrollBox.appendChild(empty);
+        } else {
+          setupMarquee(matches);
+        }
+
+        setOverlay('', false);
+        setStatus(`Updated ${formatTime(new Date())}`);
+        startScroll();
+
+      } catch (err) {
+        if (scrollBox.childElementCount === 0) {
+          setOverlay('Error loading schedule. Retrying…', true);
+        }
+        setStatus(`Last attempt failed @ ${formatTime(new Date())}`);
+        console.error('Fetch error:', err);
+      }
+    }
+
+    function startScroll() {
+      cancelScroll();
+
+      const firstBlock = scrollBox.firstElementChild;
+      if (!firstBlock || !firstBlock.classList.contains('block')) return;
+
+      const blockH = firstBlock.offsetHeight;
+      const containerH = scrollWrapper.clientHeight;
+
+      if (prefersReducedMotion || blockH <= containerH) {
+        scrollBox.style.transform = 'translateY(0)';
+        return;
+      }
+
+      const pixelsPerMs = SPEEDPXPER_S / 1000;
+      let lastTs = null;
+      let offset = 0;
+
+      const step = (ts) => {
+        if (isPaused || document.hidden || !inView) {
+          lastTs = ts;
+          rafId = requestAnimationFrame(step);
+          return;
+        }
+
+        if (lastTs == null) lastTs = ts;
+        const delta = ts - lastTs;
+        lastTs = ts;
+
+        offset += delta * pixelsPerMs;
+
+        if (offset >= blockH) {
+          offset -= blockH;
+        }
+
+        scrollBox.style.transform = `translateY(${-offset}px)`;
+        rafId = requestAnimationFrame(step);
+      };
+
+      rafId = requestAnimationFrame(step);
+    }
+
+    try {
+      const m = window.matchMedia('(prefers-reduced-motion: reduce)');
+      m.addEventListener('change', (e) => {
+        prefersReducedMotion = e.matches;
+        startScroll();
+      });
+    } catch {}
+
+    loadScores();
+    intervalId = setInterval(loadScores, REFRESH_MS);
+
+    window.addEventListener('beforeunload', () => {
+      clearInterval(intervalId);
+      cancelScroll();
+      try { fetchController?.abort(); } catch {}
+      io.disconnect();
+    });
+  </script>
+</body>
+</html>
