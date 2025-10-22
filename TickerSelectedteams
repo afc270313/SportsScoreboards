@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Soccer Ticker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    :root {
+      --bg: #000;
+      --fg: #fff;
+      --accent: #ffd700;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --speed: 15; /* pixels per second */
+    }
+
+    #container {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      white-space: nowrap;
+      padding: 10px;
+    }
+
+    #scroll {
+      display: flex;
+      flex-direction: row;
+      white-space: nowrap;
+      will-change: transform;
+    }
+
+    .match {
+      display: inline-block;
+      margin-right: 50px;
+      color: var(--fg);
+    }
+
+    .match img {
+      vertical-align: middle;
+      width: 16px;
+      height: 16px;
+      margin: 0 4px;
+    }
+
+    .league {
+      color: var(--accent);
+      font-weight: bold;
+      margin-right: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="scroll">Loading matches…</div>
+  </div>
+
+  <script>
+    const API = 'https://soccertoday.afc270313.workers.dev/';
+    const scrollBox = document.getElementById('scroll');
+    const REFRESH_MS = 330000 ;
+    const SPEED_PX_PER_S = 15;
+    const allowedLeagues = ['4328', '4330', '4331','4332','4334','4335','4351','4429','4480','4481','4482','4483','4490','4501','4502','4562','4723','4725','4888','5071','5095','5516','5517','5518'];
+
+    let rafId = null;
+    let offset = 0;
+
+    async function loadScores() {
+      try {
+        const res = await fetch(API, { cache: 'no-store' });
+        const data = await res.json();
+        const matches = Array.isArray(data?.schedule) ? data.schedule : [];
+
+        // Filter by allowed league IDs
+        const filteredMatches = matches
+          .filter(m => allowedLeagues.includes(m.idLeague))
+          .filter(m => {
+            const matchDate = m.dateEvent;
+            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            return matchDate === today;
+          });
+
+        if (!filteredMatches.length) {
+          scrollBox.textContent = 'No matches today for selected leagues.';
+          return;
+        }
+
+        scrollBox.innerHTML = ''; // Clear existing content
+
+        const fragment = document.createDocumentFragment();
+
+        const byLeague = new Map();
+        for (const m of filteredMatches) {
+          const league = (m.strLeague || 'Other').trim();
+          if (!byLeague.has(league)) byLeague.set(league, []);
+          byLeague.get(league).push(m);
+        }
+
+        for (const [league, games] of byLeague.entries()) {
+          const leagueEl = document.createElement('span');
+          leagueEl.className = 'league';
+          leagueEl.textContent = `🏆 ${league}`;
+          fragment.appendChild(leagueEl);
+
+          for (const m of games) {
+            const home = m.strHomeTeam ?? 'Home';
+            const away = m.strAwayTeam ?? 'Away';
+            const hs = m.intHomeScore ?? '–';
+            const as = m.intAwayScore ?? '–';
+            const time = m.strTime ?? '';
+            const status = m.strStatus ?? '';
+            const homeBadgeUrl = m.strHomeTeamBadge?.startsWith('http') ? m.strHomeTeamBadge : '';
+            const awayBadgeUrl = m.strAwayTeamBadge?.startsWith('http') ? m.strAwayTeamBadge : '';
+
+            const matchEl = document.createElement('span');
+            matchEl.className = 'match';
+
+            if (homeBadgeUrl) {
+              const homeBadge = document.createElement('img');
+              homeBadge.src = homeBadgeUrl;
+              homeBadge.alt = `${home} badge`;
+              matchEl.appendChild(homeBadge);
+            }
+
+            const scoreText = document.createElement('strong');
+            scoreText.textContent = `${home} ${hs} - ${as} ${away}`;
+            matchEl.appendChild(scoreText);
+
+            if (awayBadgeUrl) {
+              const awayBadge = document.createElement('img');
+              awayBadge.src = awayBadgeUrl;
+              awayBadge.alt = `${away} badge`;
+              matchEl.appendChild(awayBadge);
+            }
+
+            const meta = document.createElement('span');
+            meta.textContent = ` (${status || time})`;
+            matchEl.appendChild(meta);
+
+            fragment.appendChild(matchEl);
+          }
+        }
+
+        // Append two copies for seamless scroll
+        scrollBox.appendChild(fragment.cloneNode(true));
+        scrollBox.appendChild(fragment);
+
+        startScroll();
+
+      } catch (err) {
+        scrollBox.textContent = 'Error loading schedule.';
+        console.error('Fetch error:', err);
+      }
+    }
+
+    function startScroll() {
+      cancelScroll();
+
+      const pixelsPerMs = SPEED_PX_PER_S / 1000;
+      let lastTs = null;
+
+      const step = (ts) => {
+        if (lastTs == null) lastTs = ts;
+        const delta = ts - lastTs;
+        lastTs = ts;
+
+        offset += delta * pixelsPerMs;
+
+        const scrollWidth = scrollBox.scrollWidth / 2;
+        if (offset >= scrollWidth) {
+          offset = 0;
+        }
+
+        scrollBox.style.transform = `translateX(${-offset}px)`;
+        rafId = requestAnimationFrame(step);
+      };
+
+      rafId = requestAnimationFrame(step);
+    }
+
+    function cancelScroll() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      offset = 0;
+      scrollBox.style.transform = 'translateX(0)';
+    }
+
+    loadScores();
+    intervalId = setInterval(loadScores, REFRESH_MS);
+  </script>
+</body>
+</html>
